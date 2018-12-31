@@ -21,7 +21,6 @@ end
 class Course
   def initialize
     # hash from session_code to number of questions
-    # list of session_code in correct order
     # list of all clicker IDs for the whole term
     # hash from session_code to hash from clicker_id to number of votes
     @num_questions = Hash.new(0)
@@ -42,7 +41,6 @@ class Course
       @votes[session_code][clicker_id] = 0
     end
     @votes[session_code][clicker_id] += 1
-    # puts "just added #{session_code} with #{clicker_id}"
   end
 
   def html
@@ -84,34 +82,36 @@ class Course
           if vote['ans'] != ''
             add_clicker_vote(session_code, clicker_id)
           end
-          # puts "#{clicker_id}"
         end
       end
     end
   end
 
-  def process_course(folder, outfile=nil)
+  def process_course(folder)
     course = Course.new
     session_path = "#{folder}/SessionData/*.xml"
     Dir.glob(session_path) do |session_file|
       next if File.basename(session_file).start_with?("x")
-      course.parse_XML(session_file, course)
-    end
-    # TODO if stdout then don't write to file
-    if outfile == nil
-      puts html
-    else
-      File.open(outfile, 'w') { |file| file.write(course.html) }
+      parse_XML(session_file)
     end
   end
 end
 
 
 if __FILE__ == $0
-  classdir = 'class1'
-  classdir = '/Users/jspacco/projects/clickers/data/UIC.CS111F17'
-  classdir = '/Users/jspacco/projects/clickers/data/UCSD.CSE141F15'
+  if ARGV.length < 2
+    puts "Usage: #{$0} <course folder> [ <outfile> ]"
+    exit
+  end
+  classdir = ARGV[0]
+
   course = Course.new
-  outfile = 'out.html'
-  course.process_course(classdir, 'out.html')
+  course.process_course(classdir)
+
+  if ARGV.length > 2
+    puts course.html
+  else
+    File.open(ARGV[1], 'w') { |file| file.write(course.html) }
+  end
+
 end
