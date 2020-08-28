@@ -1,7 +1,34 @@
+#!/usr/bin/env ruby
+
 require 'nokogiri'
 require 'set'
 require 'getoptlong'
 require 'csv'
+
+class Grid
+  def initialize
+    @grid = []
+    @current = []
+    @grid << @current
+  end
+
+  def add(val)
+    @current << val
+  end
+
+  def newline
+    @current = []
+    @grid << @current
+  end
+
+  def to_csv(delim="\t")
+    res = ''
+    @grid.each do |row|
+      res += row.join(delim) + "\n"
+    end
+    return res
+  end
+end
 
 def get_datetime(filename)
   # L1609120921.xml
@@ -19,6 +46,14 @@ def get_datetime(filename)
   return "20#{year}-#{month}-#{day}"
 end
 
+def addhash(s)
+  s = s.strip
+  if !s.start_with?("#")
+    return "#" + s
+  end
+  return s
+end
+
 # process clicker data for the whole term and compute attendance
 class Course
   def initialize(csv_own = nil, csv_borrow = nil)
@@ -29,6 +64,7 @@ class Course
     @clicker_ids = Set.new
     @votes = Hash.new
     @emails = Set.new
+    @clicker_own = csv_own
 
     # clicker_id => email
     # convert to:
@@ -43,60 +79,77 @@ class Course
       @own[email].add(clicker_id)
     end
     # date => email => clicker_id
-    @borrow = csv_borrow
     # add all the emails to our list of emails, if they aren't already there
-    @borrow.each do |date, hash|
-      for email in hash.keys
-        @emails.add(email)
+    if csv_borrow != nil
+      @borrow = csv_borrow
+      @borrow.each do |date, hash|
+        for email in hash.keys
+          @emails.add(email)
+        end
       end
+    else
+      @borrow = Hash.new
     end
   end
 
-  def to_csv
+  def to_csv(delim="\t")
+    # DEBUG
+    #puts @votes[@votes.keys.to_a[0]]
+    res = Grid.new
+    res.add('email')
     out = "email,"
     for session_code in @num_questions.keys.sort
       out += "#{get_datetime(session_code)},"
+      res.add(get_datetime(session_code))
     end
+    res.newline
+    out += "\n"
     for email in @emails
       # borrow is:
       # date => clicker_id => email
       # own is:
       # email => set of clicker_ids
       out += "#{email},"
+      res.add(email)
       # go through each class period
       for session_code in @num_questions.keys.sort
+        date = get_datetime(session_code)
         # get clicker_ids for this email, for this day
         clickers = Set.new
         # if !@own.key?(email)
         #   STDERR.puts "NO CLICKER FOR #{email}"
         #   next
         # end
+        next if !@own.key?(email)
         @own[email].each do |clicker_id|
-          clickers.add(clicker_id)
+          clickers.add(addhash(clicker_id))
         end
         # if on this date, this email borrowed a clicker, add it to the set
         # of clickers used by this student
-        if @borrow.key?(session_code) && @borrow[session_code].key?(email)
-          clickers.add(@borrow[session_code][email])
+        if @borrow.key?(date) && @borrow[date].key?(email)
+          clickers.add(addhash(@borrow[date][email]))
         end
         # clickers now contains all clicker_ids used by a student
         # over the term, or on the given day
         found = false
         for clicker_id in clickers
-          puts @votes[session_code][clicker_id]
           if @votes[session_code][clicker_id] > 0
             found = true
           end
         end
         if found
           out += "1,"
+          res.add(1)
         else
           out += "0,"
+          res.add(0)
         end
       end
       out += "\n"
+      res.newline
     end
-    return out
+    #return out
+    return res.to_csv(delim)
   end
 
   def add_question(session_code)
@@ -138,7 +191,7 @@ class Course
 
   def html
     # TODO: add a way to de-anonymize, by putting in the person's name instead
-    # of just the thing
+    # of just the clicker ID
     title = "title"
     out = "<html><head><title>#{title}</title>\n"
     out += "<style>\n"
@@ -154,7 +207,10 @@ class Course
     out += "</tr>\n"
     for clicker_id in @clicker_ids.sort
       out += "<tr>\n"
-      out += "  <td>#{get_name_or_clicker(clicker_id)}</td>\n"
+      # look up the username of the student who had this clicker
+      # TODO what about students with multiple clickers?
+      username = @clicker_own.include?(clicker_id[1..-1]) ? @clicker_own[clicker_id[1..-1]] : ''
+      out += "  <td>#{get_name_or_clicker(clicker_id)} #{username}</td>\n"
       for session_code in @num_questions.keys.sort
         if @votes[session_code][clicker_id] > (3*@num_questions[session_code]/4)
           out += "  <td class=\"green\">#{get_vote(session_code, clicker_id)}</td>\n"
@@ -229,7 +285,7 @@ if __FILE__ == $0
         CSV.read(arg)[1 .. -1].each do |row|
         #CSV.foreach(arg) do |row|
           email = row[1].gsub('@knox.edu', '')
-          clicker = row[2]
+          clicker = row[2].upcase
           csvregular[clicker] = email
         end
       when '--csvborrowfile'
@@ -240,18 +296,10 @@ if __FILE__ == $0
           email = row[1].gsub('@knox.edu', '')
           clicker = row[2]
           datestr = row[3]
-          month, day, year = row[3].split('-')
-          begin
-            date = Date.new(month.to_i, day.to_i, year.to_i)
-          rescue ArgumentError
-            STDERR.puts "ROWBAR #{row}"
-            STDERR.puts "FOOBAR #{month}, #{day}, #{year}"
-            raise
-          end
           if !csvborrow.key? datestr
             csvborrow[datestr] = Hash.new
           end
-          csvborrow[datestr][email] = clicker
+          csvborrow[datestr][email] = clicker.upcase
         end
     end
   end
